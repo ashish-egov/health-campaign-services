@@ -24,7 +24,7 @@ import { generateTargetColumnsBasedOnDeliveryConditions, isDynamicTargetTemplate
 import { getBoundariesFromCampaignSearchResponse, validateBoundariesIfParentPresent } from "../utils/onGoingCampaignUpdateUtils";
 import { validateFacilityBoundaryForLowestLevel, validateLatLongForMicroplanCampaigns, validatePhoneNumberSheetWise, validateTargetsForMicroplanCampaigns, validateUniqueSheetWise, validateUserForMicroplan } from "./microplanValidators";
 import { produceModifiedMessages } from "../kafka/Producer";
-import { planConfigSearch, planFacilitySearch } from "../utils/microplanUtils";
+import { isMicroplanRequest, isMicropplanCampaignId, planConfigSearch, planFacilitySearch } from "../utils/microplanUtils";
 import { getPvarIds } from "../utils/campaignMappingUtils";
 import { fetchProductVariants } from "../api/healthApis";
 
@@ -150,7 +150,7 @@ async function validateTargets(request: any, data: any[], errors: any[], localiz
         columnsToValidate = columnsNotToBeFreezed.filter((element: any) => requiredColumns.includes(element));
     }
     const localizedTargetColumnNames = getLocalizedHeaders(columnsToValidate, localizationMap);
-    if (request?.body?.ResourceDetails?.additionalDetails?.source === "microplan") {
+    if (await isMicropplanCampaignId(request?.body?.ResourceDetails?.campaignId)) {
         validateTargetsForMicroplanCampaigns(data, errors, localizedTargetColumnNames, localizationMap);
         validateLatLongForMicroplanCampaigns(data, errors, localizationMap);
     }
@@ -296,7 +296,7 @@ export async function validateViaSchema(data: any, schema: any, request: any, lo
         if (request?.body?.ResourceDetails?.type == "user") {
             validatePhoneNumber(data, localizationMap);
         }
-        if (data?.length > 0 && request?.body?.ResourceDetails?.additionalDetails?.source != "microplan") {
+        if (data?.length > 0 && await isMicropplanCampaignId(request?.body?.ResourceDetails?.campaignId)) {
             if (!request?.body?.parentCampaignObject && data[0]?.[getLocalizedName("HCM_ADMIN_CONSOLE_BOUNDARY_CODE_OLD", localizationMap)]) {
                 throwError("COMMON", 400, "VALIDATION_ERROR", `${request?.body?.ResourceDetails?.type} template downloaded from update campaign flow has been uploaded in create campaign flow`);
             }
@@ -379,7 +379,7 @@ export async function validateViaSchemaSheetWise(dataFromExcel: any, schema: any
             const validationErrors: any[] = [];
             const uniqueIdentifierColumnName = getLocalizedName(createAndSearch?.[request?.body?.ResourceDetails?.type]?.uniqueIdentifierColumnName, localizationMap);
             const activeColumnName = createAndSearch?.[request?.body?.ResourceDetails?.type]?.activeColumnName ? getLocalizedName(createAndSearch?.[request?.body?.ResourceDetails?.type]?.activeColumnName, localizationMap) : null;
-            if (request?.body?.ResourceDetails?.type == "user" && request?.body?.ResourceDetails?.additionalDetails?.source == "microplan") {
+            if (request?.body?.ResourceDetails?.type == "user" && await isMicropplanCampaignId(request?.body?.ResourceDetails?.campaignId)) {
                 validateUserForMicroplan(data, sheetName, request, errorMap, newSchema, rowMapping, localizationMap);
             }
             else {
@@ -481,7 +481,7 @@ function validateStorageCapacity(obj: any, index: any) {
 
 
 async function validateCampaignId(request: any) {
-    const { campaignId, tenantId, type, additionalDetails } = request?.body?.ResourceDetails;
+    const { campaignId, tenantId, type } = request?.body?.ResourceDetails;
     if (type == "boundary") {
         return;
     }
@@ -510,7 +510,7 @@ async function validateCampaignId(request: any) {
             request.body.campaignBoundaries = boundaries
         }
         else {
-            if (!(additionalDetails?.source == "microplan" && type == "user")) {
+            if (!(campaignId == "microplan" && type == "user")) {
                 throwError("CAMPAIGN", 400, "CAMPAIGN_NOT_FOUND", "Campaign not found while validating campaignId");
             }
         }
@@ -699,7 +699,7 @@ async function validateBoundariesForTabs(CampaignDetails: any, resource: any, re
     const fileResponse = await httpRequest(config.host.filestore + config.paths.filestore + "/url", {}, { tenantId, fileStoreIds: resource.fileStoreId }, "get");
     const datas = await getSheetData(fileResponse?.fileStoreIds?.[0]?.url, localizedTab, true, undefined, localizationMap);
     var boundaryColumn: any;
-    if (resource?.additionalDetails?.source == 'microplan') {
+    if (await isMicroplanRequest(request)) {
         boundaryColumn = getLocalizedName(createAndSearch?.[`${resource.type}Microplan`]?.boundaryValidation?.column, localizationMap);
     }
     else {
@@ -729,7 +729,7 @@ async function validateBoundariesForTabs(CampaignDetails: any, resource: any, re
             const errorString = `The following boundary codes are not present in selected boundaries : ${missingBoundaries.join(', ')}`
             errors.push({ status: "BOUNDARYERROR", rowNumber: rowData.rowNumber, errorDetails: errorString })
         }
-        validateFacilityBoundaryForLowestLevel(request, boundaries, rowData, errors, localizationMap);
+        await validateFacilityBoundaryForLowestLevel(request, boundaries, rowData, errors, localizationMap);
     }
     if (errors?.length > 0) {
         request.body.ResourceDetails.status = resourceDataStatuses.invalid
